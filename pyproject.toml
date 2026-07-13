@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wa"
+version = "0.1.0"
+description = "Workflow Assistant CLI: centralizes project workspaces, environment variables, custom scripts, notes and tasks."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = [
+    "typer>=0.9",
+    "rich>=13.0",
+    "questionary>=2.0",
+]
+
+[project.scripts]
+wa = "wa.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wa"]
