@@ -20,7 +20,7 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # Stricter than _NAME_RE: variable names become `export NAME=value`, so they
 # must be valid shell identifiers (no dashes, can't start with a digit).
 _VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_IMMUTABLE_VARS = {"DIR"}
+IMMUTABLE_VARS = {"DIR"}
 
 
 def init_workspace() -> bool:
@@ -151,11 +151,35 @@ def get_active_project() -> Project:
     )
 
 
+def resolve_goto_path(project: Project, var_name: Optional[str] = None) -> Path:
+    """Resolve the directory `wa goto` should cd into.
+
+    With no var_name, targets the project root (DIR). With one, looks it up
+    among the project's vars (DIR/GIT/DOC/SSH/custom) and requires it to
+    point at an existing directory -- GIT/SSH are typically not paths, so
+    pointing `goto` at them fails with a clear error rather than a bad cd.
+    """
+    if var_name is None:
+        var_name = "DIR"
+
+    if var_name not in project.vars:
+        available = ", ".join(sorted(project.vars)) or "(none)"
+        raise WaError(
+            f"Variable '{var_name}' not set on project '{project.name}'. Available: {available}"
+        )
+
+    target = project.vars[var_name]
+    path = Path(target).expanduser()
+    if not path.is_dir():
+        raise WaError(f"{var_name} ('{target}') is not a directory.")
+    return path.resolve()
+
+
 def add_var(name: str, value: str) -> Project:
     """Add or update an environment variable on the active project."""
     if not _VAR_NAME_RE.match(name):
         raise WaError(f"Invalid variable name '{name}': must be a valid env var identifier.")
-    if name in _IMMUTABLE_VARS:
+    if name in IMMUTABLE_VARS:
         raise WaError(f"'{name}' is managed internally and cannot be changed with 'wa var'.")
 
     project = get_active_project()
@@ -167,7 +191,7 @@ def add_var(name: str, value: str) -> Project:
 
 def remove_var(name: str) -> Project:
     """Remove an environment variable from the active project."""
-    if name in _IMMUTABLE_VARS:
+    if name in IMMUTABLE_VARS:
         raise WaError(f"'{name}' is managed internally and cannot be removed.")
 
     project = get_active_project()

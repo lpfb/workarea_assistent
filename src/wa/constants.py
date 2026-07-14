@@ -16,3 +16,4 @@ REGISTRY_FILE = DATA_DIR / "projects.json"
 # Env var names used for shell integration and command execution context.
 SHELL_PIPE_ENV = "WA_SHELL_PIPE"
 ACTIVE_PROJ_DIR_ENV = "ACTIVE_PROJ_DIR"
+ACTIVE_TODO_LIST_ENV = "ACTIVE_TODO_LIST"
