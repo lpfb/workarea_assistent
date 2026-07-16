@@ -100,6 +100,30 @@ All notable changes to this project are documented in this file.
   wasn't practical. No migration path from either previous format -- pre-release,
   no real data depends on it yet.
 
+### Added (Etapa 5 — UX Avançada e Integração com Shell)
+- Tab completion for command/option structure (`wa <TAB>`, `wa notes <TAB>`, etc.)
+  comes for free from Typer/Click's `--install-completion`/`--show-completion`
+  (bash/zsh/fish/PowerShell) -- `rich_markup_mode=None` doesn't affect it since
+  it's a Click machinery, unrelated to rich-based help rendering.
+- Dynamic completion of *real* names, wired via `autocompletion=` callables that
+  lazily import `wa.projects`/`wa.notes` (no cost to normal startup -- they only
+  run under a separate `_WA_COMPLETE=...` shell-completion invocation):
+  - `wa open`/`wa remove <name>`: registered project names.
+  - `wa goto [var]`/`wa var remove <name>`: the active project's variable names.
+  - `wa run <name>`/`wa cmd remove <name>`: the active project's command names.
+  - `wa notes edit/remove <name>`: the active project's note names.
+  - `wa todo open <name>`: the active project's todo list names.
+  - `wa todo add [arg]`: contextual, matching the command itself -- completes
+    existing list names only when no list is open; no completions when a list
+    *is* open, since the argument is then free-form task text.
+  - `wa shell-init <shell>`: static `bash`/`zsh` completion.
+- Every completer fails silently (returns no completions) instead of raising,
+  e.g. when no project is registered yet or none is active -- a completion
+  source shouldn't be able to make the user's shell error on Tab.
+- Installed for this machine via `wa --install-completion zsh` (writes
+  `~/.zfunc/_wa`; `~/.zshrc` already had the required `fpath`/`compinit` line
+  from the earlier shell-integration setup).
+
 ### Fixed
 - **Rich markup injection in output**: `wa todo list`/`toggle` were silently
   swallowing task text like `- [x] this` because Rich parses literal `[...]` in any

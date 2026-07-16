@@ -36,15 +36,104 @@ def _print_error(console, message: object) -> None:
     console.print(f"[red]Error:[/red] {escape(str(message))}")
 
 
+def _print_info(console, message: str) -> None:
+    """Print a neutral status message (e.g. 'nothing here yet') -- dim, not red/green."""
+    console.print(f"[dim]{message}[/dim]")
+
+
+# Dynamic shell-completion callables (see 'wa --install-completion').
+#
+# These only run when a shell is actually completing a command line (a
+# separate `_WA_COMPLETE=...` invocation, not the normal command dispatch),
+# so their lazy imports don't affect regular startup time. Each one fails
+# silently (returns no completions) rather than raising -- a completion
+# source that can crash the user's shell tab-press is worse than one that's
+# occasionally empty, e.g. when no project/list is active yet.
+#
+# Signature is `(ctx, args, incomplete)` (the `args` list is unused) rather
+# than the newer click 8 `(ctx, param, incomplete)` -- this Typer version
+# only supports the `autocompletion=` param and warns that `shell_complete=`
+# is deprecated, so we follow what it actually wants.
+
+
+def _complete_project_names(ctx: typer.Context, args, incomplete: str):
+    from wa.schema import Registry
+
+    try:
+        registry = Registry.load()
+    except Exception:
+        return []
+    return [name for name in registry.projects if name.startswith(incomplete)]
+
+
+def _complete_active_project_vars(ctx: typer.Context, args, incomplete: str):
+    from wa import projects
+
+    try:
+        project = projects.get_active_project()
+    except Exception:
+        return []
+    return [name for name in project.vars if name.startswith(incomplete)]
+
+
+def _complete_active_project_cmds(ctx: typer.Context, args, incomplete: str):
+    from wa import projects
+
+    try:
+        project = projects.get_active_project()
+    except Exception:
+        return []
+    return [name for name in project.cmds if name.startswith(incomplete)]
+
+
+def _complete_note_names(ctx: typer.Context, args, incomplete: str):
+    from wa import notes, projects
+
+    try:
+        project = projects.get_active_project()
+    except Exception:
+        return []
+    return [p.stem for p in notes.list_notes(project) if p.stem.startswith(incomplete)]
+
+
+def _complete_todo_list_names(ctx: typer.Context, args, incomplete: str):
+    from wa import notes, projects
+
+    try:
+        project = projects.get_active_project()
+    except Exception:
+        return []
+    return [p.stem for p in notes.list_todo_lists(project) if p.stem.startswith(incomplete)]
+
+
+def _complete_todo_add_arg(ctx: typer.Context, args, incomplete: str):
+    """'wa todo add' is contextual: only complete list names when there's no open list."""
+    from wa import notes, projects
+
+    if notes.get_active_todo_list() is not None:
+        return []
+    try:
+        project = projects.get_active_project()
+    except Exception:
+        return []
+    return [p.stem for p in notes.list_todo_lists(project) if p.stem.startswith(incomplete)]
+
+
 @app.command("help")
 def show_help(ctx: typer.Context) -> None:
     """List available commands and descriptions."""
     typer.echo(ctx.parent.get_help())
 
 
+def _complete_shell_names(ctx: typer.Context, args, incomplete: str):
+    return [name for name in shell.SUPPORTED_SHELLS if name.startswith(incomplete)]
+
+
 @app.command("shell-init")
 def shell_init(
-    shell_name: str = typer.Argument(..., help="Target shell: bash or zsh"),
+    shell_name: str = typer.Argument(
+        ..., help="Target shell: bash or zsh", autocompletion=_complete_shell_names
+    ),
 ) -> None:
     """Print the shell function wa needs for cd/export integration.
 
@@ -68,7 +157,7 @@ def init() -> None:
     if first_time:
         console.print("[green]wa initialized.[/green]")
     else:
-        console.print("wa is already initialized.")
+        _print_info(console, "wa is already initialized.")
     console.print(f"  config: {CONFIG_DIR}")
     console.print(f"  data:   {DATA_DIR}")
 
@@ -124,7 +213,9 @@ def add(
 
 @app.command()
 def remove(
-    name: str = typer.Argument(..., help="Project name to remove."),
+    name: str = typer.Argument(
+        ..., help="Project name to remove.", autocompletion=_complete_project_names
+    ),
     delete_files: bool = typer.Option(
         False, "--delete-files", "-f", help="Also permanently delete the project's directory."
     ),
@@ -179,7 +270,7 @@ def project_list() -> None:
     console = Console()
     registry = Registry.load()
     if not registry.projects:
-        console.print("No projects registered yet. Use 'wa add <name>' to create one.")
+        _print_info(console, "No projects registered yet. Use 'wa add <name>' to create one.")
         return
 
     active_dir = os.environ.get(ACTIVE_PROJ_DIR_ENV)
@@ -201,7 +292,11 @@ def project_list() -> None:
 
 
 @app.command("open")
-def open_project(name: str = typer.Argument(..., help="Project name to open.")) -> None:
+def open_project(
+    name: str = typer.Argument(
+        ..., help="Project name to open.", autocompletion=_complete_project_names
+    ),
+) -> None:
     """Export a project's variables, set ACTIVE_PROJ_DIR, and cd into its directory."""
     from rich.console import Console
 
@@ -233,6 +328,7 @@ def goto(
     var_name: Optional[str] = typer.Argument(
         None,
         help="Variable to jump to (e.g. DOC). Omit to go to the project root (DIR).",
+        autocompletion=_complete_active_project_vars,
     ),
 ) -> None:
     """cd into the active project's root, or into a path stored in one of its variables."""
@@ -258,7 +354,9 @@ def goto(
 @app.command()
 def run(
     command_name: str = typer.Argument(
-        ..., help="Name of a custom command saved with 'wa cmd add'."
+        ...,
+        help="Name of a custom command saved with 'wa cmd add'.",
+        autocompletion=_complete_active_project_cmds,
     ),
 ) -> None:
     """Run a custom command saved for the active project, streaming its output live."""
@@ -313,7 +411,11 @@ def cmd_add(
 
 
 @cmd_app.command("remove")
-def cmd_remove(name: str = typer.Argument(..., help="Command name to remove.")) -> None:
+def cmd_remove(
+    name: str = typer.Argument(
+        ..., help="Command name to remove.", autocompletion=_complete_active_project_cmds
+    ),
+) -> None:
     """Remove a custom command from the active project."""
     from rich.console import Console
 
@@ -390,7 +492,11 @@ def var_add(
 
 
 @var_app.command("remove")
-def var_remove(name: str = typer.Argument(..., help="Variable name to remove.")) -> None:
+def var_remove(
+    name: str = typer.Argument(
+        ..., help="Variable name to remove.", autocompletion=_complete_active_project_vars
+    ),
+) -> None:
     """Remove an environment variable from the active project."""
     from rich.console import Console
 
@@ -426,7 +532,7 @@ def var_list() -> None:
         raise typer.Exit(1)
 
     if not project.vars:
-        console.print(f"No variables set on project '{project.name}'.")
+        _print_info(console, f"No variables set on project '{project.name}'.")
         return
 
     from rich.markup import escape
@@ -450,6 +556,7 @@ def notes_edit(
     name: Optional[str] = typer.Argument(
         None,
         help="Note name (without .md). Defaults to 'note-DD-MM-YYYY' (today) if omitted.",
+        autocompletion=_complete_note_names,
     ),
 ) -> None:
     """Open a note in $EDITOR, creating it first if it doesn't exist yet."""
@@ -488,7 +595,7 @@ def notes_list() -> None:
 
     paths = notes.list_notes(project)
     if not paths:
-        console.print(f"No notes on project '{project.name}'. Use 'wa notes edit <name>'.")
+        _print_info(console, f"No notes on project '{project.name}'. Use 'wa notes edit <name>'.")
         return
 
     table = Table(show_header=True)
@@ -502,7 +609,9 @@ def notes_list() -> None:
 
 @notes_app.command("remove")
 def notes_remove(
-    name: str = typer.Argument(..., help="Note name to delete."),
+    name: str = typer.Argument(
+        ..., help="Note name to delete.", autocompletion=_complete_note_names
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
     """Delete a note file."""
@@ -553,6 +662,7 @@ def todo_add(
             "No list open (see 'wa todo open'): name of a new list to create "
             "(defaults to todo-DD-MM-YYYY). List open: task text to add to it."
         ),
+        autocompletion=_complete_todo_add_arg,
     ),
 ) -> None:
     """Create a new todo list, or add a task to the currently open one."""
@@ -606,7 +716,7 @@ def todo_list() -> None:
 
     paths = notes.list_todo_lists(project)
     if not paths:
-        console.print(f"No todo lists on project '{project.name}'. Use 'wa todo add [name]'.")
+        _print_info(console, f"No todo lists on project '{project.name}'. Use 'wa todo add [name]'.")
         return
 
     active_list = notes.get_active_todo_list()
@@ -621,7 +731,11 @@ def todo_list() -> None:
 
 @todo_app.command("open")
 def todo_open(
-    name: str = typer.Argument(..., help="Todo list name to open (see 'wa todo list')."),
+    name: str = typer.Argument(
+        ...,
+        help="Todo list name to open (see 'wa todo list').",
+        autocompletion=_complete_todo_list_names,
+    ),
 ) -> None:
     """Select a todo list for this shell session and show its content."""
     from rich.console import Console

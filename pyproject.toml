@@ -15,8 +15,16 @@ dependencies = [
     "questionary>=2.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
 [project.scripts]
 wa = "wa.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wa"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
