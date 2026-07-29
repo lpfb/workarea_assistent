@@ -94,6 +94,26 @@ def open_in_editor(path: Path) -> int:
     return result.returncode
 
 
+def edit_text_in_editor(initial_text: str) -> str:
+    """Round-trip arbitrary text through the user's editor via a throwaway temp file.
+
+    Used for editing values (like a command's script) that don't have a
+    permanent file of their own, unlike notes/todo lists.
+    """
+    import tempfile
+
+    command = resolve_editor_command()
+    fd, temp_name = tempfile.mkstemp(suffix=".sh", text=True)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(initial_text)
+        subprocess.run(command + [str(temp_path)])
+        return temp_path.read_text(encoding="utf-8").rstrip("\n")
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 @dataclass
 class TodoItem:
     line_index: int  # 0-based index into the todo file's lines, for in-place rewrites

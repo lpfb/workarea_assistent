@@ -124,6 +124,24 @@ All notable changes to this project are documented in this file.
   `~/.zfunc/_wa`; `~/.zshrc` already had the required `fpath`/`compinit` line
   from the earlier shell-integration setup).
 
+### Added (fora do roadmap sequencial, a pedido)
+- `wa cmd edit <name>`: edits an existing command's script in `$EDITOR`,
+  round-tripped through a throwaway temp file (`wa/notes.edit_text_in_editor`)
+  -- much less awkward than retyping/quoting a multi-line script as a CLI
+  argument via `wa cmd add`. Fails if the command doesn't exist yet (use
+  `wa cmd add` to create one).
+- `wa var edit <name> [value]`: edits an existing variable's value. With no
+  `value`, prompts interactively (questionary) pre-filled with the current
+  value; with one, updates directly. Unlike `wa var add` (which upserts),
+  this fails if the variable isn't already set -- guards against typos
+  silently creating a new variable when the intent was to modify one.
+  `wa/projects.require_existing_var()` centralizes that existence check.
+
+### Changed
+- `wa project list` renamed to `wa list` -- it was the sole command under the
+  `project` subgroup, so the extra noun added a keystroke without adding
+  clarity (`wa add`/`wa remove`/`wa open` are all already top-level).
+
 ### Fixed
 - **Rich markup injection in output**: `wa todo list`/`toggle` were silently
   swallowing task text like `- [x] this` because Rich parses literal `[...]` in any

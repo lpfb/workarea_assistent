@@ -65,7 +65,7 @@ wa --install-completion bash   # or zsh
 | `wa init` | Create wa's XDG config/data directories. |
 | `wa add <name> [--dir DIR] [--git URL] [--doc PATH] [--ssh STR] [--yes]` | Register a new project. Prompts interactively unless `--yes` is passed. |
 | `wa remove <name> [--delete-files] [--yes]` | Unregister a project, optionally deleting its directory too. |
-| `wa project list` | List all registered projects, marking the active one. |
+| `wa list` | List all registered projects, marking the active one. |
 | `wa open <name>` | Export the project's variables, set `ACTIVE_PROJ_DIR`, and `cd` into it. |
 | `wa goto [var]` | `cd` into the active project's root (`DIR`), or into the path stored in a given variable (e.g. `wa goto DOC`). |
 
@@ -74,6 +74,7 @@ wa --install-completion bash   # or zsh
 | Command | Description |
 |---|---|
 | `wa var add <name> <value>` | Add or update a variable on the active project; applied to the current shell immediately. |
+| `wa var edit <name> [value]` | Edit an existing variable's value (fails if not set yet). Omit `value` for an interactive prompt pre-filled with the current value. |
 | `wa var remove <name>` | Remove a variable from the active project. |
 | `wa var list` | List the active project's variables (`DIR` is always immutable). |
 
@@ -82,6 +83,7 @@ wa --install-completion bash   # or zsh
 | Command | Description |
 |---|---|
 | `wa cmd add <name> <script>` | Save a shell command/script on the active project. |
+| `wa cmd edit <name>` | Edit an existing command's script in `$EDITOR` (fails if not set yet). Handy for multi-line scripts. |
 | `wa cmd remove <name>` | Remove a saved command. |
 | `wa cmd list` | List commands saved on the active project. |
 | `wa run <name>` | Run a saved command, streaming output live; `wa`'s exit code matches the command's. |

@@ -203,6 +203,30 @@ def remove_var(name: str) -> Project:
     return registry.projects[project.name]
 
 
+def get_command_script(name: str) -> str:
+    """Return the current script for `name` on the active project; raises if missing."""
+    project = get_active_project()
+    if name not in project.cmds:
+        raise WaError(f"Command '{name}' not found on project '{project.name}'.")
+    return project.cmds[name]
+
+
+def require_existing_var(name: str) -> Project:
+    """Resolve the active project and ensure `name` is already a set variable.
+
+    Used by `wa var edit`, which -- unlike `add_var` -- should not silently
+    create a new variable on a typo'd name.
+    """
+    if name in IMMUTABLE_VARS:
+        raise WaError(f"'{name}' is managed internally and cannot be changed with 'wa var'.")
+    project = get_active_project()
+    if name not in project.vars:
+        raise WaError(
+            f"Variable '{name}' not set on project '{project.name}'. Use 'wa var add' to create it."
+        )
+    return project
+
+
 def add_command(name: str, script: str) -> Project:
     """Add or overwrite a custom command (run via `wa run <name>`) on the active project."""
     if not _NAME_RE.match(name):

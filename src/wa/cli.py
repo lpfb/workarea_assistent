@@ -254,11 +254,7 @@ def remove(
     console.print(message)
 
 
-project_app = typer.Typer(help="Manage registered projects.")
-app.add_typer(project_app, name="project")
-
-
-@project_app.command("list")
+@app.command("list")
 def project_list() -> None:
     """List all registered projects."""
     from rich.console import Console
@@ -410,6 +406,30 @@ def cmd_add(
     console.print(f"[green]Saved command '{name}'[/green] on project '{project.name}'")
 
 
+@cmd_app.command("edit")
+def cmd_edit(
+    name: str = typer.Argument(
+        ..., help="Command name to edit.", autocompletion=_complete_active_project_cmds
+    ),
+) -> None:
+    """Edit an existing command's script in $EDITOR (fails if it isn't set yet)."""
+    from rich.console import Console
+
+    from wa import notes, projects
+    from wa.errors import WaError
+
+    console = Console()
+    try:
+        current_script = projects.get_command_script(name)
+        new_script = notes.edit_text_in_editor(current_script)
+        project = projects.add_command(name, new_script)
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    console.print(f"[green]Updated command '{name}'[/green] on project '{project.name}'")
+
+
 @cmd_app.command("remove")
 def cmd_remove(
     name: str = typer.Argument(
@@ -489,6 +509,47 @@ def var_add(
 
     shell.emit_export(name, value)  # apply immediately if this shell has the project open
     console.print(f"[green]Set {name}={escape(value)}[/green] on project '{project.name}'")
+
+
+@var_app.command("edit")
+def var_edit(
+    name: str = typer.Argument(
+        ..., help="Variable name to edit.", autocompletion=_complete_active_project_vars
+    ),
+    value: Optional[str] = typer.Argument(
+        None, help="New value. Omit to edit interactively, pre-filled with the current value."
+    ),
+) -> None:
+    """Edit an existing environment variable's value (fails if it isn't set yet)."""
+    from rich.console import Console
+
+    from wa import projects
+    from wa.errors import WaError
+
+    console = Console()
+    try:
+        project = projects.require_existing_var(name)
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    if value is None:
+        import questionary
+
+        value = questionary.text(f"{name} =", default=project.vars[name]).ask()
+        if value is None:
+            raise typer.Exit(0)
+
+    try:
+        project = projects.add_var(name, value)
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    from rich.markup import escape
+
+    shell.emit_export(name, value)  # apply immediately if this shell has the project open
+    console.print(f"[green]Updated {name}={escape(value)}[/green] on project '{project.name}'")
 
 
 @var_app.command("remove")
