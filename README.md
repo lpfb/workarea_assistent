@@ -2,20 +2,20 @@
 
 `wa` is a command-line tool for developers who juggle multiple projects in
 the terminal. It centralizes project workspaces, environment variables,
-custom scripts, notes, and todo lists — all addressable by project name
-instead of remembered paths and one-off shell aliases.
+custom scripts, and notes — all addressable by project name instead of
+remembered paths and one-off shell aliases.
 
 ```
 ~/anywhere ❯ wa open blogapi
 Opened 'blogapi' -> /home/user/projects/blog-api
 ~/projects/blog-api ❯ wa run build
-~/projects/blog-api ❯ wa todo add "fix the flaky auth test"
+~/projects/blog-api ❯ wa notes edit
 ```
 
 ## Features
 
-- **Project registry** — register any directory as a named project (`wa add`),
-  then jump into it from anywhere with `wa open <name>`.
+- **Project registry** — register any directory as a named project
+  (`wa prj add`), then jump into it from anywhere with `wa open <name>`.
 - **Real `cd` from a subprocess** — `wa open`/`wa goto` actually change your
   shell's working directory, via a small shell-function wrapper installed
   once during setup (see [How it works](#how-it-works)).
@@ -25,12 +25,11 @@ Opened 'blogapi' -> /home/user/projects/blog-api
 - **Custom commands** — save a shell command against a project (`wa cmd add`)
   and run it with `wa run <name>`, with live streamed output and exit code
   propagation.
-- **Notes and todo lists** — per-project markdown notes (opened in `$EDITOR`)
-  and lightweight, session-scoped todo lists, stored alongside the project
-  itself so they travel with its git history.
-- **Tab completion** — project names, variable names, command names, note
-  names, and todo list names all complete dynamically, not just the static
-  command structure.
+- **Notes** — per-project markdown notes (opened in `$EDITOR`), stored
+  alongside the project itself so they travel with its git history.
+- **Tab completion** — project names, variable names, command names, and
+  note names all complete dynamically, not just the static command
+  structure.
 
 ## Installation
 
@@ -63,11 +62,16 @@ wa --install-completion bash   # or zsh
 | Command | Description |
 |---|---|
 | `wa init` | Create wa's XDG config/data directories. |
-| `wa add <name> [--dir DIR] [--git URL] [--doc PATH] [--ssh STR] [--yes]` | Register a new project. Prompts interactively unless `--yes` is passed. |
-| `wa remove <name> [--delete-files] [--yes]` | Unregister a project, optionally deleting its directory too. |
-| `wa list` | List all registered projects, marking the active one. |
+| `wa prj add <name> [--dir DIR] [--git URL] [--doc PATH] [--ssh STR] [--yes]` | Register a new project. Prompts interactively unless `--yes` is passed. |
+| `wa prj remove <name> [--delete-files] [--yes]` | Unregister a project, optionally deleting its directory too. |
+| `wa prj list` | List all registered projects, marking the active one. |
 | `wa open <name>` | Export the project's variables, set `ACTIVE_PROJ_DIR`, and `cd` into it. |
 | `wa goto [var]` | `cd` into the active project's root (`DIR`), or into the path stored in a given variable (e.g. `wa goto DOC`). |
+
+`open`/`goto`/`run` stay top-level (no `prj`/`cmd` prefix) because they're
+the commands run most often, day to day; `add`/`remove`/`list` are setup-time
+CRUD and live under their resource's namespace (`prj`, kept short since it's
+typed often), same as `var`/`cmd`/`notes`.
 
 ### Environment variables
 
@@ -96,22 +100,6 @@ wa --install-completion bash   # or zsh
 | `wa notes list` | List the active project's notes. |
 | `wa notes remove <name> [--yes]` | Delete a note. |
 
-### Todo lists
-
-Todo lists are named and scoped to a project; one list can be "open" per
-shell session (`wa todo open`), after which `add`/`toggle`/`remove`/`show`
-act on it without repeating the name.
-
-| Command | Description |
-|---|---|
-| `wa todo add [name-or-text]` | No list open: create a new list (defaults to `todo-DD-MM-YYYY`). List open: add a task. |
-| `wa todo open <name>` | Open a list for this shell session and show its tasks. |
-| `wa todo close` | Close the currently open list in this shell session. |
-| `wa todo show` | Show the currently open list's tasks. |
-| `wa todo toggle <n>` | Toggle a task's checked state. |
-| `wa todo remove <n>` | Delete a task. |
-| `wa todo list` | List all todo lists on the active project, marking the open one. |
-
 ### Misc
 
 | Command | Description |
@@ -129,15 +117,14 @@ side-channel file (`$WA_SHELL_PIPE`) and `eval`s them in the current shell.
 This is how `wa open` and `wa goto` are able to actually move you between
 directories.
 
-"Active project" (`ACTIVE_PROJ_DIR`) and "active todo list"
-(`ACTIVE_TODO_LIST`) are both per-shell-session environment variables, never
-persisted to disk — two terminals can have different projects or todo lists
-open at the same time without conflict.
+"Active project" (`ACTIVE_PROJ_DIR`) is a per-shell-session environment
+variable, never persisted to disk — two terminals can have different
+projects open at the same time without conflict.
 
 Data is stored following the XDG Base Directory spec: configuration in
-`~/.config/wa/`, and the project registry in `~/.local/share/wa/`. Notes and
-todo lists live inside each project's own directory (`<DIR>/notes/`), so
-they're versioned alongside the project's code.
+`~/.config/wa/`, and the project registry in `~/.local/share/wa/`. Notes
+live inside each project's own directory (`<DIR>/notes/`), so they're
+versioned alongside the project's code.
 
 ## Development
 

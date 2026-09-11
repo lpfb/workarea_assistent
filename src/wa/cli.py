@@ -13,7 +13,7 @@ import typer
 from wa import shell
 
 app = typer.Typer(
-    help="Workflow Assistant: manage project workspaces, env vars, scripts, notes and tasks.",
+    help="Workflow Assistant: manage project workspaces, env vars, scripts and notes.",
     no_args_is_help=True,
     # Typer's default rich-based help formatter unconditionally imports
     # rich.markdown -> markdown_it/pygments, adding ~200ms to every
@@ -96,29 +96,6 @@ def _complete_note_names(ctx: typer.Context, args, incomplete: str):
     return [p.stem for p in notes.list_notes(project) if p.stem.startswith(incomplete)]
 
 
-def _complete_todo_list_names(ctx: typer.Context, args, incomplete: str):
-    from wa import notes, projects
-
-    try:
-        project = projects.get_active_project()
-    except Exception:
-        return []
-    return [p.stem for p in notes.list_todo_lists(project) if p.stem.startswith(incomplete)]
-
-
-def _complete_todo_add_arg(ctx: typer.Context, args, incomplete: str):
-    """'wa todo add' is contextual: only complete list names when there's no open list."""
-    from wa import notes, projects
-
-    if notes.get_active_todo_list() is not None:
-        return []
-    try:
-        project = projects.get_active_project()
-    except Exception:
-        return []
-    return [p.stem for p in notes.list_todo_lists(project) if p.stem.startswith(incomplete)]
-
-
 @app.command("help")
 def show_help(ctx: typer.Context) -> None:
     """List available commands and descriptions."""
@@ -162,8 +139,12 @@ def init() -> None:
     console.print(f"  data:   {DATA_DIR}")
 
 
-@app.command()
-def add(
+project_app = typer.Typer(help="Manage registered projects (add/remove/list).")
+app.add_typer(project_app, name="prj")
+
+
+@project_app.command("add")
+def project_add(
     name: str = typer.Argument(..., help="Project name (unique identifier)."),
     dir: Optional[str] = typer.Option(
         None, "--dir", "-d", help="Project root directory. Defaults to the current directory."
@@ -211,8 +192,8 @@ def add(
         console.print(f"  {key} = {escape(value)}")
 
 
-@app.command()
-def remove(
+@project_app.command("remove")
+def project_remove(
     name: str = typer.Argument(
         ..., help="Project name to remove.", autocompletion=_complete_project_names
     ),
@@ -254,7 +235,7 @@ def remove(
     console.print(message)
 
 
-@app.command("list")
+@project_app.command("list")
 def project_list() -> None:
     """List all registered projects."""
     from rich.console import Console
@@ -266,7 +247,9 @@ def project_list() -> None:
     console = Console()
     registry = Registry.load()
     if not registry.projects:
-        _print_info(console, "No projects registered yet. Use 'wa add <name>' to create one.")
+        _print_info(
+            console, "No projects registered yet. Use 'wa prj add <name>' to create one."
+        )
         return
 
     active_dir = os.environ.get(ACTIVE_PROJ_DIR_ENV)
@@ -695,225 +678,6 @@ def notes_remove(
         _print_error(console, exc)
         raise typer.Exit(1)
     console.print(f"[green]Removed note '{name}'[/green]")
-
-
-todo_app = typer.Typer(help="Manage the active project's todo lists.")
-app.add_typer(todo_app, name="todo")
-
-
-def _print_todo_items(console, items) -> None:
-    from rich.markup import escape
-
-    if not items:
-        console.print("(empty)")
-        return
-    for i, item in enumerate(items, start=1):
-        text = escape(item.text)
-        if item.checked:
-            console.print(f"{i}. [green]{escape('[x]')}[/green] [strike]{text}[/strike]")
-        else:
-            console.print(f"{i}. {escape('[ ]')} {text}")
-
-
-@todo_app.command("add")
-def todo_add(
-    text_or_name: Optional[str] = typer.Argument(
-        None,
-        help=(
-            "No list open (see 'wa todo open'): name of a new list to create "
-            "(defaults to todo-DD-MM-YYYY). List open: task text to add to it."
-        ),
-        autocompletion=_complete_todo_add_arg,
-    ),
-) -> None:
-    """Create a new todo list, or add a task to the currently open one."""
-    from rich.console import Console
-
-    from wa import notes, projects
-    from wa.errors import WaError
-
-    console = Console()
-    try:
-        project = projects.get_active_project()
-        active_list = notes.get_active_todo_list()
-
-        if active_list is None:
-            list_name = text_or_name or notes.default_todo_name()
-            notes.create_todo_list(project, list_name)
-        else:
-            if not text_or_name:
-                raise WaError('Task text is required, e.g. \'wa todo add "fix bug"\'.')
-            notes.add_todo(project, active_list, text_or_name)
-    except WaError as exc:
-        _print_error(console, exc)
-        raise typer.Exit(1)
-
-    from rich.markup import escape
-
-    if active_list is None:
-        console.print(
-            f"[green]Created todo list '{escape(list_name)}'[/green]. "
-            f"Use 'wa todo open {list_name}' to open it."
-        )
-    else:
-        console.print(f"[green]Added[/green] to '{active_list}': {escape(text_or_name)}")
-
-
-@todo_app.command("list")
-def todo_list() -> None:
-    """List all todo lists on the active project."""
-    from rich.console import Console
-    from rich.table import Table
-
-    from wa import notes, projects
-    from wa.errors import WaError
-
-    console = Console()
-    try:
-        project = projects.get_active_project()
-    except WaError as exc:
-        _print_error(console, exc)
-        raise typer.Exit(1)
-
-    paths = notes.list_todo_lists(project)
-    if not paths:
-        _print_info(console, f"No todo lists on project '{project.name}'. Use 'wa todo add [name]'.")
-        return
-
-    active_list = notes.get_active_todo_list()
-    table = Table(show_header=True)
-    table.add_column("")
-    table.add_column("Name")
-    for path in paths:
-        marker = "●" if path.stem == active_list else ""
-        table.add_row(marker, path.stem)
-    console.print(table)
-
-
-@todo_app.command("open")
-def todo_open(
-    name: str = typer.Argument(
-        ...,
-        help="Todo list name to open (see 'wa todo list').",
-        autocompletion=_complete_todo_list_names,
-    ),
-) -> None:
-    """Select a todo list for this shell session and show its content."""
-    from rich.console import Console
-    from rich.markup import escape
-
-    from wa import notes, projects
-    from wa.constants import ACTIVE_TODO_LIST_ENV
-    from wa.errors import WaError
-
-    console = Console()
-    try:
-        project = projects.get_active_project()
-        path = notes.resolve_todo_list_path(project, name)
-        if not path.is_file():
-            raise WaError(f"Todo list '{name}' not found. Use 'wa todo add {name}' to create it.")
-        items = notes.parse_todo(project, name)
-    except WaError as exc:
-        _print_error(console, exc)
-        raise typer.Exit(1)
-
-    shell.emit_export(ACTIVE_TODO_LIST_ENV, name)
-
-    console.print(f"[green]Opened todo list '{escape(name)}'[/green]")
-    _print_todo_items(console, items)
-
-
-@todo_app.command("close")
-def todo_close() -> None:
-    """Close the currently open todo list in this shell session."""
-    from rich.console import Console
-
-    from wa import notes
-    from wa.constants import ACTIVE_TODO_LIST_ENV
-    from wa.errors import WaError
-
-    console = Console()
-    active_list = notes.get_active_todo_list()
-    if active_list is None:
-        _print_error(console, WaError("No todo list open."))
-        raise typer.Exit(1)
-
-    shell.emit(f"unset {ACTIVE_TODO_LIST_ENV}")
-    console.print(f"[green]Closed todo list '{active_list}'[/green]")
-
-
-@todo_app.command("show")
-def todo_show() -> None:
-    """Show the content of the currently open todo list."""
-    from rich.console import Console
-
-    from wa import notes, projects
-    from wa.errors import WaError
-
-    console = Console()
-    try:
-        project = projects.get_active_project()
-        active_list = notes.get_active_todo_list()
-        if active_list is None:
-            raise WaError("No todo list open. Run 'wa todo open <name>' first.")
-        items = notes.parse_todo(project, active_list)
-    except WaError as exc:
-        _print_error(console, exc)
-        raise typer.Exit(1)
-
-    console.print(f"[green]{active_list}[/green]")
-    _print_todo_items(console, items)
-
-
-@todo_app.command("toggle")
-def todo_toggle(
-    position: int = typer.Argument(..., help="Task number (see 'wa todo open <name>')."),
-) -> None:
-    """Toggle a task's checked state in the currently open todo list."""
-    from rich.console import Console
-    from rich.markup import escape
-
-    from wa import notes, projects
-    from wa.errors import WaError
-
-    console = Console()
-    try:
-        project = projects.get_active_project()
-        active_list = notes.get_active_todo_list()
-        if active_list is None:
-            raise WaError("No todo list open. Run 'wa todo open <name>' first.")
-        item = notes.toggle_todo(project, active_list, position)
-    except WaError as exc:
-        _print_error(console, exc)
-        raise typer.Exit(1)
-
-    marker = escape("[x]") if item.checked else escape("[ ]")
-    console.print(f"[green]{marker}[/green] {escape(item.text)}")
-
-
-@todo_app.command("remove")
-def todo_remove(
-    position: int = typer.Argument(..., help="Task number (see 'wa todo open <name>')."),
-) -> None:
-    """Delete a task from the currently open todo list."""
-    from rich.console import Console
-    from rich.markup import escape
-
-    from wa import notes, projects
-    from wa.errors import WaError
-
-    console = Console()
-    try:
-        project = projects.get_active_project()
-        active_list = notes.get_active_todo_list()
-        if active_list is None:
-            raise WaError("No todo list open. Run 'wa todo open <name>' first.")
-        item = notes.remove_todo(project, active_list, position)
-    except WaError as exc:
-        _print_error(console, exc)
-        raise typer.Exit(1)
-
-    console.print(f"[green]Removed[/green]: {escape(item.text)}")
 
 
 def main() -> None:

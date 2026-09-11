@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `wa add`/`wa remove`/`wa list` moved under a new `wa prj` namespace
+  (`wa prj add`/`wa prj remove`/`wa prj list`), for symmetry with
+  `var`/`cmd`/`notes` -- each of those is a resource with its own CRUD
+  subcommands, and project management was the only one whose CRUD sat bare
+  at the root. Named `prj`, not `project`, since -- unlike `var`/`cmd`/`notes`
+  -- it's still typed reasonably often. `open`, `goto` and `run` stay
+  top-level: unlike `add`/`remove`/`list` (setup-time, run once per
+  project), they're the commands used constantly in a normal session, so
+  the extra keystroke isn't worth paying there.
+
+### Removed
+- The entire `wa todo` feature (lists, tasks, `ACTIVE_TODO_LIST` session state, and
+  the `<DIR>/notes/todo/` storage convention). `wa notes` is now the only
+  per-project note-taking feature.
+
 ### Added (Etapa 1 — Arquitetura e Estrutura de Dados)
 - Project skeleton and packaging (`pyproject.toml`, `src/wa` layout, entry point `wa`).
 - XDG-compliant path resolution: config in `~/.config/wa/`, data in `~/.local/share/wa/`.

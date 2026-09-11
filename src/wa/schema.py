@@ -1,10 +1,10 @@
 """JSON persistence layer for wa's project registry.
 
 Design: a single registry file (projects.json) under XDG_DATA_HOME holds
-metadata for every project wa knows about. Notes/todos are intentionally
-NOT stored here -- they live as .md files inside each project's own
-directory (see spec section 4, `notes`/`todo`), so they travel with the
-project's own git history instead of wa's private state.
+metadata for every project wa knows about. Notes are intentionally NOT
+stored here -- they live as .md files inside each project's own directory
+(see spec section 4, `notes`), so they travel with the project's own git
+history instead of wa's private state.
 """
 from __future__ import annotations
 
