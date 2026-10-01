@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Storage architecture**: a project's `vars` and `cmds` now live in
+  `<DIR>/.wa/data.json` (see the new `wa/project_data.py`), not inline in
+  the central registry (`~/.local/share/wa/projects.json`). The registry
+  now only stores a pointer per project (`ProjectRef`: name + dir),
+  mirroring what notes/ already did -- data that belongs to a project
+  travels with its own directory instead of being tied to the machine that
+  registered it (clone/copy/move it, and its vars/cmds come along).
+  `<DIR>/.wa/` is machine-local by default: `wa` writes a self-contained
+  `.wa/.gitignore` (`*`) the first time it saves there. Existing v1
+  registries are migrated transparently on first load (their inline
+  vars/cmds are moved out to each project's `.wa/data.json`); this is
+  automatic and requires no action. `wa/schema.py`'s `Project` is now a
+  plain in-memory view assembled from `ProjectRef` + `ProjectData` by
+  `wa/projects.py` -- it's no longer persisted directly.
 - `wa add`/`wa remove`/`wa list` moved under a new `wa prj` namespace
   (`wa prj add`/`wa prj remove`/`wa prj list`), for symmetry with
   `var`/`cmd`/`notes` -- each of those is a resource with its own CRUD

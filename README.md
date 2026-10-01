@@ -33,11 +33,41 @@ Opened 'blogapi' -> /home/user/projects/blog-api
 
 ## Installation
 
+### Recommended: pipx
+
+[pipx](https://pipx.pypa.io/) installs `wa` into its own isolated virtual
+environment while still putting the `wa` command on your `PATH`, so it's
+available in every shell without manually activating anything.
+
+```bash
+# install pipx first if you don't have it
+python3 -m pip install --user pipx
+pipx ensurepath
+
+# from the project directory
+pipx install .
+```
+
+To pick up code changes without reinstalling (useful if you're tracking a
+local clone), use an editable install instead:
+
+```bash
+pipx install -e .
+```
+
+### Alternative: pip + virtualenv
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
+
+With this method `wa` is only on your `PATH` while the virtualenv is
+activated, so you'd need to `source .venv/bin/activate` (or add
+`.venv/bin` to `PATH`) in every new shell before using it.
+
+### Shell integration
 
 Then wire up shell integration by adding this to your `~/.bashrc` or
 `~/.zshrc`:
@@ -121,10 +151,17 @@ directories.
 variable, never persisted to disk — two terminals can have different
 projects open at the same time without conflict.
 
-Data is stored following the XDG Base Directory spec: configuration in
-`~/.config/wa/`, and the project registry in `~/.local/share/wa/`. Notes
-live inside each project's own directory (`<DIR>/notes/`), so they're
-versioned alongside the project's code.
+Data is split across two layers. A central registry, following the XDG
+Base Directory spec (configuration in `~/.config/wa/`, registry in
+`~/.local/share/wa/`), holds only each project's name and directory --
+enough to resolve `wa open <name>` before anything else is known. Its
+variables, custom commands, and notes all live *inside* the project's own
+directory instead (`<DIR>/.wa/data.json` and `<DIR>/notes/`), so they
+travel with the project itself when it's moved, cloned, or copied,
+independent of which machine or `$HOME` registered it. `<DIR>/.wa/` is
+machine-local by default: `wa` drops a self-contained `.wa/.gitignore`
+(`*`) the first time it writes there, so it's excluded from git even if
+you never add it to the project's own `.gitignore`.
 
 ## Development
 

@@ -1,5 +1,12 @@
 """Domain logic for managing projects: init, add, remove, vars, cmds, context.
 
+A project's data is split across two layers (see wa/schema.py and
+wa/project_data.py): the central registry only knows a project's name and
+directory (ProjectRef); vars/cmds live in the project's own
+<DIR>/.wa/data.json. This module is what assembles/splits the merged
+`Project` view callers actually work with, so that split is invisible
+outside this file.
+
 Deliberately free of typer/rich/questionary imports -- this module is the
 "core engine"; wa/cli.py is the only place that talks to the user.
 """
@@ -14,13 +21,32 @@ from typing import Optional
 
 from wa.constants import ACTIVE_PROJ_DIR_ENV, CONFIG_DIR
 from wa.errors import WaError
-from wa.schema import Project, Registry
+from wa.project_data import ProjectData, load_project_data, save_project_data
+from wa.schema import Project, ProjectRef, Registry
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # Stricter than _NAME_RE: variable names become `export NAME=value`, so they
 # must be valid shell identifiers (no dashes, can't start with a digit).
 _VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 IMMUTABLE_VARS = {"DIR"}
+
+
+def _load_project(ref: ProjectRef) -> Project:
+    """Assemble the merged, in-memory Project view from its central pointer
+    plus its local vars/cmds (see wa/project_data.py)."""
+    data = load_project_data(Path(ref.dir))
+    return Project(
+        name=ref.name, vars={"DIR": ref.dir, **data.vars}, cmds=dict(data.cmds),
+        created_at=ref.created_at,
+    )
+
+
+def _save_project_local(project: Project) -> None:
+    """Persist a Project's vars/cmds back to its own <DIR>/.wa/data.json (DIR excluded --
+    it's implicit in the file's own location, not user-editable data)."""
+    directory = Path(project.vars["DIR"])
+    local_vars = {k: v for k, v in project.vars.items() if k != "DIR"}
+    save_project_data(directory, ProjectData(vars=local_vars, cmds=dict(project.cmds)))
 
 
 def init_workspace() -> bool:
@@ -70,7 +96,12 @@ def add_project(
     doc: Optional[str] = None,
     ssh: Optional[str] = None,
 ) -> Project:
-    """Validate inputs, persist a new project, and scaffold its notes/ directory."""
+    """Validate inputs, persist a new project, and scaffold its notes/ directory.
+
+    If the directory already has local data from a previous registration
+    (see wa/project_data.py) -- e.g. it was `remove`d without --delete-files
+    and is now being re-`add`ed -- that data is preserved, not clobbered.
+    """
     registry = Registry.load()
     validate_project_name(name, registry)
 
@@ -78,35 +109,41 @@ def add_project(
     if not resolved_dir.is_dir():
         raise WaError(f"Directory does not exist: {resolved_dir}")
 
-    project_vars = {"DIR": str(resolved_dir)}
-    if git:
-        project_vars["GIT"] = git
-    if doc:
-        project_vars["DOC"] = doc
-    if ssh:
-        project_vars["SSH"] = ssh
-
     (resolved_dir / "notes").mkdir(exist_ok=True)
 
-    project = Project(name=name, vars=project_vars)
-    registry.projects[name] = project
+    local_data = load_project_data(resolved_dir)
+    if git:
+        local_data.vars["GIT"] = git
+    if doc:
+        local_data.vars["DOC"] = doc
+    if ssh:
+        local_data.vars["SSH"] = ssh
+    if local_data.vars or local_data.cmds:
+        save_project_data(resolved_dir, local_data)
+
+    ref = ProjectRef(name=name, dir=str(resolved_dir))
+    registry.projects[name] = ref
     registry.save()
-    return project
+    return _load_project(ref)
 
 
 def remove_project(name: str, delete_files: bool = False) -> Project:
-    """Remove a project from the registry, optionally deleting its directory on disk."""
+    """Remove a project from the registry, optionally deleting its directory on disk.
+
+    Without --delete-files, the project's own <DIR>/.wa/data.json is left
+    untouched -- only the central pointer is forgotten, so re-`add`ing the
+    same directory later picks its vars/cmds back up.
+    """
     registry = Registry.load()
     if name not in registry.projects:
         raise WaError(f"Project '{name}' not found.")
 
-    project = registry.projects.pop(name)
+    ref = registry.projects.pop(name)
+    project = _load_project(ref)
     registry.save()
 
     if delete_files:
-        directory = project.vars.get("DIR")
-        if directory:
-            _safe_rmtree(Path(directory))
+        _safe_rmtree(Path(ref.dir))
 
     return project
 
@@ -126,7 +163,24 @@ def get_project(name: str) -> Project:
     registry = Registry.load()
     if name not in registry.projects:
         raise WaError(f"Project '{name}' not found.")
-    return registry.projects[name]
+    return _load_project(registry.projects[name])
+
+
+def list_projects() -> list:
+    """Every registered project, merged with its local vars/cmds, for `wa prj list`.
+
+    A project whose directory is missing/unreadable still shows up (name +
+    DIR from the central pointer), just without its local vars/cmds --
+    listing shouldn't break because one project moved or was deleted.
+    """
+    registry = Registry.load()
+    result = []
+    for ref in registry.projects.values():
+        try:
+            result.append(_load_project(ref))
+        except OSError:
+            result.append(Project(name=ref.name, vars={"DIR": ref.dir}, created_at=ref.created_at))
+    return result
 
 
 def get_active_project() -> Project:
@@ -141,9 +195,9 @@ def get_active_project() -> Project:
 
     resolved = str(Path(active_dir).resolve())
     registry = Registry.load()
-    for project in registry.projects.values():
-        if project.vars.get("DIR") == resolved:
-            return project
+    for ref in registry.projects.values():
+        if ref.dir == resolved:
+            return _load_project(ref)
 
     raise WaError(
         f"{ACTIVE_PROJ_DIR_ENV} ({active_dir}) doesn't match any known project "
@@ -183,10 +237,9 @@ def add_var(name: str, value: str) -> Project:
         raise WaError(f"'{name}' is managed internally and cannot be changed with 'wa var'.")
 
     project = get_active_project()
-    registry = Registry.load()
-    registry.projects[project.name].vars[name] = value
-    registry.save()
-    return registry.projects[project.name]
+    project.vars[name] = value
+    _save_project_local(project)
+    return project
 
 
 def remove_var(name: str) -> Project:
@@ -195,12 +248,11 @@ def remove_var(name: str) -> Project:
         raise WaError(f"'{name}' is managed internally and cannot be removed.")
 
     project = get_active_project()
-    registry = Registry.load()
-    if name not in registry.projects[project.name].vars:
+    if name not in project.vars:
         raise WaError(f"Variable '{name}' not set on project '{project.name}'.")
-    del registry.projects[project.name].vars[name]
-    registry.save()
-    return registry.projects[project.name]
+    del project.vars[name]
+    _save_project_local(project)
+    return project
 
 
 def get_command_script(name: str) -> str:
@@ -236,18 +288,16 @@ def add_command(name: str, script: str) -> Project:
         )
 
     project = get_active_project()
-    registry = Registry.load()
-    registry.projects[project.name].cmds[name] = script
-    registry.save()
-    return registry.projects[project.name]
+    project.cmds[name] = script
+    _save_project_local(project)
+    return project
 
 
 def remove_command(name: str) -> Project:
     """Remove a custom command from the active project."""
     project = get_active_project()
-    registry = Registry.load()
-    if name not in registry.projects[project.name].cmds:
+    if name not in project.cmds:
         raise WaError(f"Command '{name}' not found on project '{project.name}'.")
-    del registry.projects[project.name].cmds[name]
-    registry.save()
-    return registry.projects[project.name]
+    del project.cmds[name]
+    _save_project_local(project)
+    return project

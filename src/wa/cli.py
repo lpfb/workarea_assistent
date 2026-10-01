@@ -241,12 +241,12 @@ def project_list() -> None:
     from rich.console import Console
     from rich.table import Table
 
+    from wa import projects
     from wa.constants import ACTIVE_PROJ_DIR_ENV
-    from wa.schema import Registry
 
     console = Console()
-    registry = Registry.load()
-    if not registry.projects:
+    all_projects = projects.list_projects()
+    if not all_projects:
         _print_info(
             console, "No projects registered yet. Use 'wa prj add <name>' to create one."
         )
@@ -262,10 +262,13 @@ def project_list() -> None:
     table.add_column("Name")
     table.add_column("DIR")
     table.add_column("GIT")
-    for name, project in sorted(registry.projects.items()):
+    for project in sorted(all_projects, key=lambda p: p.name):
         marker = "●" if project.vars.get("DIR") == active_resolved else ""
         table.add_row(
-            marker, name, escape(project.vars.get("DIR", "")), escape(project.vars.get("GIT", ""))
+            marker,
+            project.name,
+            escape(project.vars.get("DIR", "")),
+            escape(project.vars.get("GIT", "")),
         )
     console.print(table)
 
