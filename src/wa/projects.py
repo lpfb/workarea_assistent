@@ -1,4 +1,4 @@
-"""Domain logic for managing projects: init, add, remove, vars, cmds, context.
+"""Domain logic for managing projects: init, add, remove, vars, cmds, tmux layout, context.
 
 A project's data is split across two layers (see wa/schema.py and
 wa/project_data.py): the central registry only knows a project's name and
@@ -17,8 +17,9 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
+from wa import config
 from wa.constants import ACTIVE_PROJ_DIR_ENV, CONFIG_DIR
 from wa.errors import WaError
 from wa.project_data import ProjectData, load_project_data, save_project_data
@@ -29,6 +30,9 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # must be valid shell identifiers (no dashes, can't start with a digit).
 _VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 IMMUTABLE_VARS = {"DIR"}
+# tmux window names become part of targets like "session:window", where ':'
+# and '.' are separators -- disallow those plus control characters.
+_WINDOW_NAME_FORBIDDEN = re.compile(r"[:.\x00-\x1f\x7f]")
 
 
 def _load_project(ref: ProjectRef) -> Project:
@@ -37,16 +41,19 @@ def _load_project(ref: ProjectRef) -> Project:
     data = load_project_data(Path(ref.dir))
     return Project(
         name=ref.name, vars={"DIR": ref.dir, **data.vars}, cmds=dict(data.cmds),
-        created_at=ref.created_at,
+        created_at=ref.created_at, tmux_windows=data.tmux_windows,
     )
 
 
 def _save_project_local(project: Project) -> None:
-    """Persist a Project's vars/cmds back to its own <DIR>/.wa/data.json (DIR excluded --
-    it's implicit in the file's own location, not user-editable data)."""
+    """Persist a Project's vars/cmds/tmux layout back to its own <DIR>/.wa/data.json (DIR
+    excluded -- it's implicit in the file's own location, not user-editable data)."""
     directory = Path(project.vars["DIR"])
     local_vars = {k: v for k, v in project.vars.items() if k != "DIR"}
-    save_project_data(directory, ProjectData(vars=local_vars, cmds=dict(project.cmds)))
+    save_project_data(
+        directory,
+        ProjectData(vars=local_vars, cmds=dict(project.cmds), tmux_windows=project.tmux_windows),
+    )
 
 
 def init_workspace() -> bool:
@@ -59,6 +66,7 @@ def init_workspace() -> bool:
 
     already_initialized = REGISTRY_FILE.exists()
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config.ensure_config_file()
     Registry.load()  # side effect: creates DATA_DIR + projects.json if missing
     return not already_initialized
 
@@ -98,7 +106,9 @@ def add_project(
 ) -> Project:
     """Validate inputs, persist a new project, and scaffold its notes/ directory.
 
-    If the directory already has local data from a previous registration
+    The new project gets its own copy of the default tmux layout (see
+    wa/config.py) right away, so later changes to the defaults don't leak
+    into it. If the directory already has local data from a previous registration
     (see wa/project_data.py) -- e.g. it was `remove`d without --delete-files
     and is now being re-`add`ed -- that data is preserved, not clobbered.
     """
@@ -118,8 +128,9 @@ def add_project(
         local_data.vars["DOC"] = doc
     if ssh:
         local_data.vars["SSH"] = ssh
-    if local_data.vars or local_data.cmds:
-        save_project_data(resolved_dir, local_data)
+    if local_data.tmux_windows is None:
+        local_data.tmux_windows = config.load_default_tmux_windows()
+    save_project_data(resolved_dir, local_data)
 
     ref = ProjectRef(name=name, dir=str(resolved_dir))
     registry.projects[name] = ref
@@ -299,5 +310,81 @@ def remove_command(name: str) -> Project:
     if name not in project.cmds:
         raise WaError(f"Command '{name}' not found on project '{project.name}'.")
     del project.cmds[name]
+    _save_project_local(project)
+    return project
+
+
+def ensure_tmux_windows(project: Project) -> List[Dict[str, str]]:
+    """Return the project's tmux layout, seeding (and persisting) it from the
+    global defaults first if it was never materialized -- i.e. the project
+    predates the tmux feature."""
+    if project.tmux_windows is None:
+        project.tmux_windows = config.load_default_tmux_windows()
+        _save_project_local(project)
+    return project.tmux_windows
+
+
+def _find_window(project: Project, name: str) -> int:
+    for index, window in enumerate(ensure_tmux_windows(project)):
+        if window["name"] == name:
+            return index
+    raise WaError(f"No tmux window '{name}' in project '{project.name}'.")
+
+
+def validate_window_name(name: str) -> None:
+    if not name.strip() or _WINDOW_NAME_FORBIDDEN.search(name):
+        raise WaError(
+            f"Invalid tmux window name '{name}': must be non-empty and not contain ':' or '.'."
+        )
+
+
+def add_tmux_window(name: str, cmd: str = "", at: Optional[int] = None) -> tuple:
+    """Insert a window into the active project's tmux layout.
+
+    `at` is a 0-based position; None or anything past the end appends.
+    Returns (project, index actually used).
+    """
+    validate_window_name(name)
+    if at is not None and at < 0:
+        raise WaError(f"Invalid position {at}: must be 0 or greater.")
+
+    project = get_active_project()
+    windows = ensure_tmux_windows(project)
+    if any(w["name"] == name for w in windows):
+        raise WaError(
+            f"tmux window '{name}' already exists in project '{project.name}'. "
+            "Use 'wa tmux edit' to change its command."
+        )
+
+    index = len(windows) if at is None else min(at, len(windows))
+    windows.insert(index, {"name": name, "cmd": cmd})
+    _save_project_local(project)
+    return project, index
+
+
+def remove_tmux_window(name: str) -> Project:
+    """Remove a window from the active project's tmux layout (never the last one --
+    a tmux session can't exist without a window)."""
+    project = get_active_project()
+    index = _find_window(project, name)
+    if len(project.tmux_windows) == 1:
+        raise WaError(
+            f"Cannot remove '{name}': it's the only window in project '{project.name}'."
+        )
+    del project.tmux_windows[index]
+    _save_project_local(project)
+    return project
+
+
+def get_tmux_window_cmd(name: str) -> str:
+    """Return the startup command of a window in the active project's layout."""
+    project = get_active_project()
+    return project.tmux_windows[_find_window(project, name)]["cmd"]
+
+
+def edit_tmux_window(name: str, cmd: str) -> Project:
+    """Change the startup command of an existing window in the active project's layout."""
+    project = get_active_project()
+    project.tmux_windows[_find_window(project, name)]["cmd"] = cmd
     _save_project_local(project)
     return project

@@ -15,7 +15,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional
 
 from wa.constants import DATA_DIR, REGISTRY_FILE
 from wa.project_data import ProjectData, save_project_data
@@ -45,7 +45,7 @@ class ProjectRef:
 
 @dataclass
 class Project:
-    """Merged, in-memory view of a project: its pointer plus its local vars/cmds.
+    """Merged, in-memory view of a project: its pointer plus its local vars/cmds/tmux layout.
 
     Never persisted directly -- wa/projects.py assembles this from a
     ProjectRef (central) and a ProjectData (local), and splits it back
@@ -56,6 +56,7 @@ class Project:
     vars: Dict[str, str] = field(default_factory=dict)
     cmds: Dict[str, str] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    tmux_windows: Optional[List[Dict[str, str]]] = None
 
 
 @dataclass

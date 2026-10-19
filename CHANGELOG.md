@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **tmux sessions**: `wa open <proj>` now opens the project's tmux session
+  (one per project, named after it), creating it from the project's layout
+  if it isn't running yet and resuming it if it is. Every window starts in
+  `DIR` and gets `wa open <proj>` typed into it (followed by the window's
+  own command, if any), so the project's vars are exported there too.
+  Inside the project's own session `wa open` keeps doing the plain
+  cd/export (which is also what stops the windows from recursing); inside
+  another session it switches the client instead of nesting. `--no-tmux`
+  skips tmux entirely.
+- `wa close [proj] [--yes]` undoes `wa open`: kills the project's tmux
+  session (asking first) and, when it's the active project in this shell,
+  unsets its variables and `ACTIVE_PROJ_DIR`. Variables are only unset for
+  the shell's own active project, since other projects share names like
+  `DIR`/`GIT`. `wa prj remove` now closes the project the same way before
+  unregistering it (before `--delete-files` removes the directory the
+  session's panes live in).
+- `wa tmux add <name> [command] [--at N]` / `remove <name> [--yes]` /
+  `edit <name> [command]` / `list` manage the active project's layout.
+  `add` and `remove` also open/close the window in the project's session
+  when it's running (`remove` asks first, since closing a window kills
+  what runs in it).
+- The layout lives in `<DIR>/.wa/data.json` (`tmux.windows`; data schema
+  v2). New projects get a copy of the defaults (`git`, `edit`, `deploy`)
+  from `~/.config/wa/config.json` at `wa prj add` time -- written by
+  `wa init` -- and own it from then on; projects predating this get theirs
+  on first use.
+- If tmux isn't installed, `wa open` offers to install it with the
+  detected package manager (pacman/apt/dnf/zypper/apk/brew), showing the
+  exact command first. Declining, having no TTY to ask on, or a failed
+  install never fails `wa open` -- it warns and falls back to a plain
+  cd/export.
+
 ### Changed
 - **Storage architecture**: a project's `vars` and `cmds` now live in
   `<DIR>/.wa/data.json` (see the new `wa/project_data.py`), not inline in

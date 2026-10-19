@@ -5,6 +5,7 @@ are deferred into command bodies -- the top-level module stays cheap so
 `wa --help` and completion stay instant.
 """
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -84,6 +85,16 @@ def _complete_active_project_cmds(ctx: typer.Context, args, incomplete: str):
     except Exception:
         return []
     return [name for name in project.cmds if name.startswith(incomplete)]
+
+
+def _complete_tmux_windows(ctx: typer.Context, args, incomplete: str):
+    from wa import projects
+
+    try:
+        project = projects.get_active_project()
+    except Exception:
+        return []
+    return [w["name"] for w in project.tmux_windows or [] if w["name"].startswith(incomplete)]
 
 
 def _complete_note_names(ctx: typer.Context, args, incomplete: str):
@@ -224,6 +235,8 @@ def project_remove(
             )
 
     try:
+        # Close first: the session's panes live in DIR, which --delete-files removes.
+        _close_project(console, projects.get_project(name), yes)
         project = projects.remove_project(name, delete_files=delete_files)
     except WaError as exc:
         _print_error(console, exc)
@@ -278,11 +291,16 @@ def open_project(
     name: str = typer.Argument(
         ..., help="Project name to open.", autocompletion=_complete_project_names
     ),
+    no_tmux: bool = typer.Option(
+        False, "--no-tmux", help="Only cd/export in this shell; don't open the tmux session."
+    ),
 ) -> None:
-    """Export a project's variables, set ACTIVE_PROJ_DIR, and cd into its directory."""
+    """Open a project: its tmux session (created from its layout if needed), or,
+    inside that session or with --no-tmux, just export its variables, set
+    ACTIVE_PROJ_DIR, and cd into its directory."""
     from rich.console import Console
 
-    from wa import projects
+    from wa import projects, tmux
     from wa.errors import WaError
 
     from rich.markup import escape
@@ -291,18 +309,165 @@ def open_project(
     try:
         project = projects.get_project(name)
         directory = project.vars.get("DIR")
-        if not directory or not Path(directory).is_dir():
-            raise WaError(f"Project '{name}' has no valid DIR to open.")
+        if not directory:
+            raise WaError(f"Project '{name}' has no DIR set.")
+        if not Path(directory).is_dir():
+            raise WaError(
+                f"Project '{name}' DIR does not exist or is not accessible "
+                f"on this machine: {directory}"
+            )
     except WaError as exc:
         _print_error(console, exc)
         raise typer.Exit(1)
 
+    session = tmux.session_name(project.name)
+    # Inside the project's own session this is the `wa open` typed into each
+    # window at creation -- plain cd/export, or the windows would recurse.
+    if no_tmux or tmux.current_session() == session or not _ensure_tmux_available(console):
+        _emit_open(project, directory)
+        console.print(f"[green]Opened '{name}'[/green] -> {escape(directory)}")
+        return
+
+    try:
+        windows = projects.ensure_tmux_windows(project)
+        created = tmux.ensure_session(session, directory, project.name, windows)
+        if os.environ.get("TMUX"):
+            tmux.switch_client(session)
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    verb = "Created" if created else "Resumed"
+    console.print(f"[green]{verb} tmux session '{session}'[/green] -> {escape(directory)}")
+    if not os.environ.get("TMUX"):
+        # Also open the project in this shell, so it's there after detaching.
+        _emit_open(project, directory)
+        tmux.attach(session)
+
+
+def _emit_open(project, directory: str) -> None:
     for key, value in project.vars.items():
         shell.emit_export(key, value)
     shell.emit_export("ACTIVE_PROJ_DIR", directory)
     shell.emit_cd(directory)
 
-    console.print(f"[green]Opened '{name}'[/green] -> {escape(directory)}")
+
+def _stdin_is_interactive() -> bool:
+    return sys.stdin.isatty()
+
+
+def _ensure_tmux_available(console) -> bool:
+    """True if tmux can be used, offering to install it first when it's missing.
+
+    Never fails `wa open`: when tmux is unavailable (declined, no TTY to ask
+    on, unknown package manager, failed install) it warns and returns False
+    so the caller falls back to a plain cd/export.
+    """
+    import subprocess
+
+    from wa import tmux
+
+    if tmux.is_installed():
+        return True
+
+    command = tmux.install_command()
+    fallback = "opening without a tmux session (use --no-tmux to skip this check)."
+    if command is None:
+        console.print(f"[yellow]tmux is not installed[/yellow] and no known package manager was found; {fallback}")
+        return False
+    command_text = " ".join(command)
+    if not _stdin_is_interactive():
+        console.print(f"[yellow]tmux is not installed[/yellow] (install it with '{command_text}'); {fallback}")
+        return False
+
+    import questionary
+
+    if not questionary.confirm(
+        f"tmux is not installed. Install it now with '{command_text}'?", default=False
+    ).ask():
+        console.print(f"[yellow]Skipped tmux install[/yellow]; {fallback}")
+        return False
+
+    result = subprocess.run(command)
+    if result.returncode != 0 or not tmux.is_installed():
+        console.print(f"[yellow]tmux install failed[/yellow] (exit code {result.returncode}); {fallback}")
+        return False
+    console.print("[green]tmux installed.[/green]")
+    return True
+
+
+@app.command("close")
+def close_project(
+    name: Optional[str] = typer.Argument(
+        None,
+        help="Project name to close. Defaults to the active project.",
+        autocompletion=_complete_project_names,
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Kill the tmux session without asking."
+    ),
+) -> None:
+    """Close a project: kill its tmux session and, if it's active in this shell, unset its variables."""
+    from rich.console import Console
+
+    from wa import projects
+    from wa.errors import WaError
+
+    console = Console()
+    try:
+        project = projects.get_project(name) if name else projects.get_active_project()
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    if not _close_project(console, project, yes):
+        _print_info(console, f"Project '{project.name}' isn't open; nothing to close.")
+
+
+def _close_project(console, project, yes: bool) -> bool:
+    """Undo `wa open`: unset the project's variables if it's active in this
+    shell, and kill its tmux session if it's running (asking first, unless
+    `yes` -- that kills whatever runs in it). Returns False if neither applied.
+
+    Only unsets when *this* project is the active one: other projects share
+    variable names (DIR, GIT, ...), so unsetting them would clobber the
+    project this shell actually has open.
+    """
+    from wa import tmux
+    from wa.constants import ACTIVE_PROJ_DIR_ENV
+    from wa.errors import WaError
+
+    active_dir = os.environ.get(ACTIVE_PROJ_DIR_ENV)
+    is_active = bool(active_dir) and str(Path(active_dir).resolve()) == project.vars["DIR"]
+    session = _running_session(project)
+    if not is_active and not session:
+        return False
+
+    if session and not yes:
+        import questionary
+
+        if not questionary.confirm(
+            f"Kill tmux session '{session}'? Anything running in it will be killed.",
+            default=False,
+        ).ask():
+            _print_info(console, f"Left tmux session '{session}' running.")
+            session = None
+
+    if is_active:
+        for key in project.vars:
+            shell.emit_unset(key)
+        shell.emit_unset(ACTIVE_PROJ_DIR_ENV)
+        console.print(f"[green]Closed '{project.name}'[/green] in this shell (variables unset)")
+
+    if session:
+        console.print(f"[green]Killed tmux session '{session}'[/green]")
+        # Last: when run from inside the session, this kills wa's own shell too.
+        try:
+            tmux.kill_session(session)
+        except WaError as exc:
+            _print_error(console, exc)
+            raise typer.Exit(1)
+    return True
 
 
 @app.command()
@@ -557,7 +722,7 @@ def var_remove(
         _print_error(console, exc)
         raise typer.Exit(1)
 
-    shell.emit(f"unset {name}")
+    shell.emit_unset(name)
     console.print(f"[green]Removed {name}[/green] from project '{project.name}'")
 
 
@@ -592,6 +757,173 @@ def var_list() -> None:
         note = "(immutable)" if var_name in IMMUTABLE_VARS else ""
         table.add_row(var_name, escape(value), note)
     console.print(table)
+
+
+tmux_app = typer.Typer(
+    help="Manage the active project's tmux layout (the windows 'wa open' creates)."
+)
+app.add_typer(tmux_app, name="tmux")
+
+
+def _running_session(project) -> Optional[str]:
+    """The project's tmux session name if it's running right now, else None."""
+    from wa import tmux
+
+    if not tmux.is_installed():
+        return None
+    session = tmux.session_name(project.name)
+    return session if tmux.has_session(session) else None
+
+
+@tmux_app.command("add")
+def tmux_add(
+    name: str = typer.Argument(..., help="Window name."),
+    command: str = typer.Argument(
+        "", help="Command to run in the window after 'wa open'. Omit for a plain shell."
+    ),
+    at: Optional[int] = typer.Option(
+        None, "--at", help="0-based position in the layout. Defaults to the end."
+    ),
+) -> None:
+    """Add a window to the layout (and to the project's session, if it's running)."""
+    from rich.console import Console
+
+    from wa import projects, tmux
+    from wa.errors import WaError
+
+    console = Console()
+    try:
+        project, index = projects.add_tmux_window(name, command, at)
+        session = _running_session(project)
+        if session:
+            following = [w["name"] for w in project.tmux_windows[index + 1:]]
+            tmux.insert_window(
+                session, project.vars["DIR"], project.name, project.tmux_windows[index], following
+            )
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    from rich.markup import escape
+
+    message = f"[green]Added tmux window '{escape(name)}'[/green] at position {index} on project '{project.name}'"
+    if session:
+        message += f" and opened it in session '{session}'"
+    console.print(message)
+
+
+@tmux_app.command("remove")
+def tmux_remove(
+    name: str = typer.Argument(
+        ..., help="Window name to remove.", autocompletion=_complete_tmux_windows
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Close the window in the running session without asking."
+    ),
+) -> None:
+    """Remove a window from the layout (and close it in the running session)."""
+    from rich.console import Console
+    from rich.markup import escape
+
+    from wa import projects, tmux
+    from wa.errors import WaError
+
+    console = Console()
+    try:
+        project = projects.remove_tmux_window(name)
+        session = _running_session(project)
+        window_id = tmux.find_window(session, name) if session else None
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    console.print(f"[green]Removed tmux window '{escape(name)}'[/green] from project '{project.name}'")
+    if not window_id:
+        return
+
+    if not yes:
+        import questionary
+
+        if not questionary.confirm(
+            f"Window '{name}' is open in session '{session}'. Close it now? "
+            "Anything running in it will be killed.",
+            default=False,
+        ).ask():
+            _print_info(console, f"Left window '{escape(name)}' open; it won't be created next time.")
+            return
+
+    try:
+        tmux.kill_window(window_id)
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+    console.print(f"Closed it in session '{session}'.")
+
+
+@tmux_app.command("edit")
+def tmux_edit(
+    name: str = typer.Argument(
+        ..., help="Window name to edit.", autocompletion=_complete_tmux_windows
+    ),
+    command: Optional[str] = typer.Argument(
+        None, help="New command ('' for a plain shell). Omit to edit interactively."
+    ),
+) -> None:
+    """Change a window's startup command (takes effect next time the session is created)."""
+    from rich.console import Console
+    from rich.markup import escape
+
+    from wa import projects
+    from wa.errors import WaError
+
+    console = Console()
+    try:
+        if command is None:
+            import questionary
+
+            command = questionary.text(
+                f"{name} command:", default=projects.get_tmux_window_cmd(name)
+            ).ask()
+            if command is None:
+                raise typer.Exit(0)
+        project = projects.edit_tmux_window(name, command)
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    console.print(
+        f"[green]Updated tmux window '{escape(name)}'[/green] on project '{project.name}'"
+    )
+
+
+@tmux_app.command("list")
+def tmux_list() -> None:
+    """List the windows 'wa open' creates for the active project, in order."""
+    from rich.console import Console
+    from rich.markup import escape
+    from rich.table import Table
+
+    from wa import projects
+    from wa.errors import WaError
+
+    console = Console()
+    try:
+        project = projects.get_active_project()
+        windows = projects.ensure_tmux_windows(project)
+        session = _running_session(project)
+    except WaError as exc:
+        _print_error(console, exc)
+        raise typer.Exit(1)
+
+    table = Table(show_header=True)
+    table.add_column("#")
+    table.add_column("Window")
+    table.add_column("Command")
+    for index, window in enumerate(windows):
+        table.add_row(str(index), escape(window["name"]), escape(window["cmd"]) or "[dim](shell)[/dim]")
+    console.print(table)
+    if session:
+        _print_info(console, f"Session '{session}' is running.")
 
 
 notes_app = typer.Typer(help="Manage markdown notes on the active project.")

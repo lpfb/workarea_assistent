@@ -64,13 +64,17 @@ def emit(line: str) -> None:
 
 
 def emit_cd(path: "os.PathLike[str] | str") -> None:
-    emit(f"cd {_quote(str(path))}")
+    emit(f"cd {quote(str(path))}")
 
 
 def emit_export(name: str, value: str) -> None:
-    emit(f"export {name}={_quote(value)}")
+    emit(f"export {name}={quote(value)}")
 
 
-def _quote(value: str) -> str:
+def emit_unset(name: str) -> None:
+    emit(f"unset {name}")
+
+
+def quote(value: str) -> str:
     """Single-quote a value for safe use in eval'd shell code (handles embedded quotes/spaces)."""
     return "'" + value.replace("'", "'\\''") + "'"
