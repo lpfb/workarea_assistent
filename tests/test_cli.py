@@ -249,3 +249,24 @@ def test_no_active_project_error_shared_across_commands(project_dir):
         result = runner.invoke(app, args)
         assert result.exit_code == 1, args
         assert "No active project" in result.output, args
+
+
+def test_version_flag_prints_installed_version(monkeypatch):
+    import importlib.metadata
+
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "1.2.3")
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "wa 1.2.3"
+
+
+def test_version_flag_when_not_installed(monkeypatch):
+    import importlib.metadata
+
+    def missing(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "version unknown" in result.output

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "wa"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Workflow Assistant CLI: centralizes project workspaces, environment variables, custom scripts, notes and tasks."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -22,6 +22,12 @@ dev = [
 
 [project.scripts]
 wa = "wa.cli:app"
+
+# The version comes from the latest git tag (vX.Y.Z), resolved at build/install
+# time -- an editable install must be reinstalled to pick up a new tag.
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wa"]

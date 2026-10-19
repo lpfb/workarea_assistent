@@ -25,6 +25,32 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        typer.echo(f"wa {version('wa')}")
+    except PackageNotFoundError:
+        typer.echo("wa (version unknown: not installed as a package)")
+    raise typer.Exit()
+
+
+@app.callback()
+def main_callback(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show wa's version (from the git tag it was installed from) and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    pass
+
+
 def _print_error(console, message: object) -> None:
     """Print a user-facing error, escaping any dynamic content it may carry.
 

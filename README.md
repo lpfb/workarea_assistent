@@ -180,6 +180,7 @@ terminal to ask on — it just does the plain `cd`/export.
 | Command | Description |
 |---|---|
 | `wa help` | Alias for `wa --help`. |
+| `wa --version` | Print the installed version. |
 | `wa shell-init <bash\|zsh>` | Print the shell function used for the rc-file integration above. |
 
 ## How it works
@@ -217,3 +218,15 @@ pytest
 ```
 
 See `CHANGELOG.md` for the full history of what has landed.
+
+### Releasing
+
+Versions follow [SemVer](https://semver.org/) and come from git tags --
+there's no version number to edit in `pyproject.toml`:
+
+1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new
+   `## [X.Y.Z] - YYYY-MM-DD` heading and commit.
+2. `git tag -a vX.Y.Z -m "wa X.Y.Z"` and `git push origin main vX.Y.Z`.
+3. Reinstall (`pip install -e .` / `pipx install --force .`) so
+   `wa --version` reports the new tag -- installs read the version once,
+   at install time.

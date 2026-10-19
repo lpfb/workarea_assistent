@@ -4,7 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-19
+
+First tagged release. Versions follow [Semantic Versioning](https://semver.org/);
+while in 0.x, a minor bump may still change commands or the data format.
+
 ### Added
+- `wa --version` / `-V`. The version is taken from the git tag the package
+  was built/installed from (`vX.Y.Z`, via hatch-vcs), instead of being
+  hard-coded in `pyproject.toml`.
 - **tmux sessions**: `wa open <proj>` now opens the project's tmux session
   (one per project, named after it), creating it from the project's layout
   if it isn't running yet and resuming it if it is. Every window starts in
